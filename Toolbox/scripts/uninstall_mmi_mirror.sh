@@ -164,7 +164,15 @@ log "JAR target: ${JAR_TARGET}"
 log "Stable RGI recovery source: ${VOLUME}/Toolbox/apps/carplay-rgi"
 
 log "Disabling the persistent MMI Mirror AutoStart hook, if present"
-disable_autostart || fail "Could not completely remove the MMI Mirror AutoStart state"
+# Downgrade to a warning: the boot runner requires the runtime binary to exist
+# (prerequisite wait), so a leftover block is inert once the runtime below is
+# removed. Hard-failing here would block the component cleanup this uninstall
+# exists for.
+if ! disable_autostart; then
+    log "WARNING: AutoStart state was not removed completely (unpaired startup.sh markers or mount failure)."
+    log "WARNING: the boot block is inert without the runtime; restore startup.sh from its AutoStart ON"
+    log "WARNING: backup and run AutoStart OFF once to clear any leftover block."
+fi
 
 # Stop BaseVideo while the installed runtime scripts still exist. If RGI currently
 # presents a frame, Java may intentionally keep ctx80 owned until RGI ends/reboot.

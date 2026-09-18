@@ -67,8 +67,11 @@ dump_file() {
     LABEL="$1"
     SRC="$2"
     if [ -f "${SRC}" ]; then
-        cp -p "${SRC}" "${OUT}/files/${LABEL}" 2>/dev/null
-        log "PRESENT  ${SRC}"
+        if cp -p "${SRC}" "${OUT}/files/${LABEL}" 2>/dev/null; then
+            log "PRESENT  ${SRC} (copy saved as files/${LABEL})"
+        else
+            log "PRESENT  ${SRC} (WARNING: copy to SD failed - metadata only)"
+        fi
         log "         size=$(wc -c < "${SRC}")  cksum=$(cksum < "${SRC}" 2>/dev/null)"
     else
         log "ABSENT   ${SRC}"
@@ -101,7 +104,12 @@ log "mmi-mirror tmp markers: $(ls /tmp/mmi-mirror-* 2>/dev/null | tr '\n' ' ' ||
 
 section "5. Running processes of interest"
 if command -v pidin >/dev/null 2>&1; then
-    pidin ar 2>/dev/null | grep -E 'dio_manager|maneuver_render|mmi-mirror|sshd|carplay' | head -20
+    PROCESSES=$(pidin ar 2>/dev/null | grep -E 'dio_manager|maneuver_render|mmi-mirror|sshd|carplay' | head -20)
+    if [ -n "${PROCESSES}" ]; then
+        log "${PROCESSES}"
+    else
+        log "(no matching processes running)"
+    fi
 else
     log "pidin unavailable"
 fi

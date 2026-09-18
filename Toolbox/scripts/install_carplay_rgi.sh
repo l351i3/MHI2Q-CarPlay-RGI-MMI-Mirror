@@ -44,12 +44,9 @@ if [ -z "${VERSION}" ]; then
 fi
 case "${VERSION}" in
   MHI2Q_CN_*)
-    GATE_PASSED=1
     ;;
   MHI2Q_*)
-    if [ "${CARPLAY_RGI_ALLOW_NON_CN}" = "1" ]; then
-      GATE_PASSED=1
-    else
+    if [ "${CARPLAY_RGI_ALLOW_NON_CN}" != "1" ]; then
       gate_refuse "Firmware train ${VERSION} is MHI2Q but not CN. The shipped payload is CN-built and unverified on this train. Set CARPLAY_RGI_ALLOW_NON_CN=1 only if you accept the risk."
     fi
     ;;

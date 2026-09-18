@@ -131,8 +131,9 @@ mount -uw /mnt/system || mark_error "Could not mount /mnt/system read-write"
 # files. Preserve whatever is currently in production before overwriting it,
 # so a wrong-region overwrite can still be undone from this SD card.
 PRESTATE_DIR="${VOLUME}/Backup/rescue-prestate-$(date '+%Y%m%d-%H%M%S')"
-mkdir -p "${PRESTATE_DIR}" 2>/dev/null
-if [ -d "${PRESTATE_DIR}" ]; then
+PRESTATE_OK=0
+mkdir -p "${PRESTATE_DIR}" 2>/dev/null && [ -d "${PRESTATE_DIR}" ] && PRESTATE_OK=1
+if [ "${PRESTATE_OK}" = "1" ]; then
   for CUR in "${SMARTPHONE_JSON}" "${DIO_JSON}"; do
     if [ -f "${CUR}" ]; then
       cp -f "${CUR}" "${PRESTATE_DIR}/$(basename "${CUR}")" 2>/dev/null && \
@@ -149,11 +150,19 @@ fi
 # existing backups, or whether an RGI installation is complete/partial/broken.
 if [ -f "${SMARTPHONE_JSON}" ] && command -v cmp >/dev/null 2>&1; then
   cmp -s "${SMARTPHONE_JSON}" "${RESCUE_SOURCE}/smartphone_integrator.json" || \
-    echo "WARNING: current smartphone_integrator.json differs from the rescue payload; the original was saved to ${PRESTATE_DIR}"
+    if [ "${PRESTATE_OK}" = "1" ]; then
+      echo "WARNING: current smartphone_integrator.json differs from the rescue payload; the original was saved to ${PRESTATE_DIR}"
+    else
+      echo "WARNING: current smartphone_integrator.json differs from the rescue payload; NO pre-rescue copy is available."
+    fi
 fi
 if [ -f "${DIO_JSON}" ] && command -v cmp >/dev/null 2>&1; then
   cmp -s "${DIO_JSON}" "${RESCUE_SOURCE}/dio_manager.json" || \
-    echo "WARNING: current dio_manager.json differs from the rescue payload; the original was saved to ${PRESTATE_DIR}"
+    if [ "${PRESTATE_OK}" = "1" ]; then
+      echo "WARNING: current dio_manager.json differs from the rescue payload; the original was saved to ${PRESTATE_DIR}"
+    else
+      echo "WARNING: current dio_manager.json differs from the rescue payload; NO pre-rescue copy is available."
+    fi
 fi
 restore_file "${RESCUE_SOURCE}/smartphone_integrator.json" "${SMARTPHONE_JSON}"
 restore_file "${RESCUE_SOURCE}/dio_manager.json" "${DIO_JSON}"
