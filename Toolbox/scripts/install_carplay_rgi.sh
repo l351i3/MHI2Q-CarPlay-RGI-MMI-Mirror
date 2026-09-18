@@ -886,6 +886,30 @@ log "FAZIT: ${FAZIT}"
 log "Source: ${APP_SOURCE}"
 log "Backup: ${BACKUPFOLDER}"
 
+# Firmware compatibility gate - refuse BEFORE touching any production file.
+# The shipped hook/renderer/jar are built and tested against MHI2Q CN trains;
+# on MHI2 (non-Q) units the CarPlay stack uses a different interface, and on
+# other regions the CN-built payload is unverified. An empty VERSION means the
+# train could not even be read, which also poisons the backup folder naming.
+if [ -z "${VERSION}" ]; then
+  fail "Could not read 'Current train' from /net/rcc/dev/shmem/version.txt. Refusing to install without a known firmware train."
+fi
+case "${VERSION}" in
+  MHI2Q_CN_*)
+    log "Firmware train ${VERSION}: MHI2Q CN - compatibility gate passed"
+    ;;
+  MHI2Q_*)
+    if [ "${CARPLAY_RGI_ALLOW_NON_CN}" = "1" ]; then
+      log "WARNING: firmware train ${VERSION} is MHI2Q but not CN; proceeding only because CARPLAY_RGI_ALLOW_NON_CN=1 was explicitly set"
+    else
+      fail "Firmware train ${VERSION} is MHI2Q but not CN. The shipped payload is CN-built and unverified on this train. Set CARPLAY_RGI_ALLOW_NON_CN=1 only if you accept the risk."
+    fi
+    ;;
+  *)
+    fail "Firmware train '${VERSION}' is not MHI2Q. This payload requires an MHI2Q head unit; refusing to install."
+    ;;
+esac
+
 recover_stale_transaction
 
 require_file "${APP_SOURCE}/libcarplay_hook.so"

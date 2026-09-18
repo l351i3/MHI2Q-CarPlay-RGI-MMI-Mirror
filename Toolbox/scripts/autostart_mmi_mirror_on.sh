@@ -7,6 +7,7 @@ if [ "$_" = "/bin/on" ]; then BASE="$0"; else BASE="$_"; fi
 SCRIPTDIR=$( cd -P -- "$(dirname -- "$(command -v -- "$BASE")")" && pwd -P )
 . "${SCRIPTDIR}/util_info.sh"
 . "${SCRIPTDIR}/util_mountsd.sh"
+. "${SCRIPTDIR}/util_startupblock.sh"
 [ -n "${VOLUME:-}" ] || { echo "No SD-card found"; exit 1; }
 
 STARTUP="/etc/boot/startup.sh"
@@ -50,7 +51,7 @@ write_status() {
 
 remove_boot_block_best_effort() {
     mount -uw /mnt/system 2>/dev/null || return 1
-    sed -i '/# MMI MIRROR V2.2 AUTOSTART BEGIN/,/# MMI MIRROR V2.2 AUTOSTART END/d' "${STARTUP}" 2>/dev/null
+    startup_block_delete "${STARTUP}" 2>/dev/null
     sync
     mount -ur /mnt/system 2>/dev/null
 }
@@ -69,14 +70,9 @@ mount -uw /mnt/system 2>/dev/null || {
     exit 1
 }
 
-# Idempotently replace this project's block. Never restore the whole startup.sh,
-# because other Toolbox features may also own independent boot modifications.
-sed -i '/# MMI MIRROR V2.2 AUTOSTART BEGIN/,/# MMI MIRROR V2.2 AUTOSTART END/d' "${STARTUP}" || {
-    mount -ur /mnt/system 2>/dev/null
-    write_status "FAILED" "Could not remove a previous AutoStart block"
-    exit 1
-}
-
+# Validate BEFORE any edit: an unpaired BEGIN/END block would make a range
+# delete destroy unrelated startup content, and a missing/duplicate boot
+# anchor makes injection unsafe. Both conditions refuse with startup.sh intact.
 ANCHOR_COUNT=$(grep -cF "${BOOT_ANCHOR}" "${STARTUP}" 2>/dev/null)
 if [ "${ANCHOR_COUNT}" != "1" ]; then
     mount -ur /mnt/system 2>/dev/null
@@ -84,6 +80,21 @@ if [ "${ANCHOR_COUNT}" != "1" ]; then
     echo "Expected exactly one '${BOOT_ANCHOR}' anchor; refusing an unsafe startup.sh edit."
     exit 1
 fi
+if ! startup_block_pairing_ok "${STARTUP}"; then
+    mount -ur /mnt/system 2>/dev/null
+    write_status "FAILED" "Unpaired AutoStart markers in startup.sh"
+    echo "startup.sh has unpaired MMI MIRROR AUTOSTART BEGIN/END markers; refusing to edit."
+    echo "Restore it from ${STARTUP_BACKUP}, then retry AutoStart ON."
+    exit 1
+fi
+
+# Idempotently replace this project's block. Never restore the whole startup.sh,
+# because other Toolbox features may also own independent boot modifications.
+startup_block_delete "${STARTUP}" || {
+    mount -ur /mnt/system 2>/dev/null
+    write_status "FAILED" "Could not remove a previous AutoStart block"
+    exit 1
+}
 
 cat > "${BOOT_BLOCK}" <<'EOF'
 # MMI MIRROR V2.2 AUTOSTART BEGIN
@@ -103,14 +114,13 @@ cat > "${BOOT_BLOCK}" <<'EOF'
 # MMI MIRROR V2.2 AUTOSTART END
 EOF
 
-sed -i "/# DCIVIDEO: Kombi Map/r ${BOOT_BLOCK}" "${STARTUP}" || {
+startup_block_insert "${STARTUP}" "${BOOT_ANCHOR}" "${BOOT_BLOCK}" || {
     rm -f "${BOOT_BLOCK}"
     mount -ur /mnt/system 2>/dev/null
     write_status "FAILED" "Could not inject AutoStart at the boot anchor"
     exit 1
 }
 rm -f "${BOOT_BLOCK}"
-sync
 
 BLOCK_COUNT=$(grep -cF "${BEGIN_MARK}" "${STARTUP}" 2>/dev/null)
 ANCHOR_LINE=$(grep -nF "${BOOT_ANCHOR}" "${STARTUP}" 2>/dev/null | head -1 | cut -d: -f1)
@@ -121,7 +131,7 @@ case "${ANCHOR_LINE}:${BLOCK_LINE}" in
 esac
 
 if [ "${BLOCK_COUNT}" != "1" ] || [ "${LOCATION_OK}" -ne 1 ]; then
-    sed -i '/# MMI MIRROR V2.2 AUTOSTART BEGIN/,/# MMI MIRROR V2.2 AUTOSTART END/d' "${STARTUP}" 2>/dev/null
+    startup_block_delete "${STARTUP}" 2>/dev/null
     sync
     mount -ur /mnt/system 2>/dev/null
     write_status "FAILED" "AutoStart block placement verification failed"

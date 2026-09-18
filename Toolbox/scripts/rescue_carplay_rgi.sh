@@ -127,8 +127,34 @@ echo "Mounting /mnt/app and /mnt/system read-write"
 mount -uw /mnt/app || mark_error "Could not mount /mnt/app read-write"
 mount -uw /mnt/system || mark_error "Could not mount /mnt/system read-write"
 
+# The rescue payload is one fixed CN configuration, not this unit's own stock
+# files. Preserve whatever is currently in production before overwriting it,
+# so a wrong-region overwrite can still be undone from this SD card.
+PRESTATE_DIR="${VOLUME}/Backup/rescue-prestate-$(date '+%Y%m%d-%H%M%S')"
+mkdir -p "${PRESTATE_DIR}" 2>/dev/null
+if [ -d "${PRESTATE_DIR}" ]; then
+  for CUR in "${SMARTPHONE_JSON}" "${DIO_JSON}"; do
+    if [ -f "${CUR}" ]; then
+      cp -f "${CUR}" "${PRESTATE_DIR}/$(basename "${CUR}")" 2>/dev/null && \
+        echo "Saved pre-rescue copy: ${PRESTATE_DIR}/$(basename "${CUR}")"
+    else
+      echo "Note: ${CUR} does not exist (nothing to save)"
+    fi
+  done
+else
+  echo "WARNING: could not create ${PRESTATE_DIR}; the current configuration will be overwritten without a pre-rescue copy."
+fi
+
 # Always attempt BOTH stock-config restores, regardless of the current files,
 # existing backups, or whether an RGI installation is complete/partial/broken.
+if [ -f "${SMARTPHONE_JSON}" ] && command -v cmp >/dev/null 2>&1; then
+  cmp -s "${SMARTPHONE_JSON}" "${RESCUE_SOURCE}/smartphone_integrator.json" || \
+    echo "WARNING: current smartphone_integrator.json differs from the rescue payload; the original was saved to ${PRESTATE_DIR}"
+fi
+if [ -f "${DIO_JSON}" ] && command -v cmp >/dev/null 2>&1; then
+  cmp -s "${DIO_JSON}" "${RESCUE_SOURCE}/dio_manager.json" || \
+    echo "WARNING: current dio_manager.json differs from the rescue payload; the original was saved to ${PRESTATE_DIR}"
+fi
 restore_file "${RESCUE_SOURCE}/smartphone_integrator.json" "${SMARTPHONE_JSON}"
 restore_file "${RESCUE_SOURCE}/dio_manager.json" "${DIO_JSON}"
 

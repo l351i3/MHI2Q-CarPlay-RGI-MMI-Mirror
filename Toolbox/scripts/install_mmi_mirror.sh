@@ -561,14 +561,23 @@ log "V2.2 Unified HMI JAR installed as ${JAR_TARGET} ($(file_size "${JAR_TARGET}
 
 sync || fail "sync failed"
 
-rm -rf "${JAR_TXN_DIR}" || fail "Could not commit JAR transaction"
-JAR_TXN_ACTIVE=0
-if [ "${RGI_RENDERER_TXN_ACTIVE}" -eq 1 ]; then
-    rm -rf "${RGI_RENDERER_TXN_DIR}" || fail "Could not commit RGI renderer transaction"
-    RGI_RENDERER_TXN_ACTIVE=0
-fi
+# Commit point: runtime, JAR and renderer are all on disk and synced. From here
+# the install is final. Clear the rollback trap and transaction flags BEFORE
+# deleting any snapshot: once part of the snapshots is gone, a rollback can
+# only produce a mixed old/new state, so cleanup failures must degrade to
+# retryable warnings instead of triggering fail/rollback.
+trap - 1 2 15
 SWAP_STARTED=0
-rm -rf "${ROLLBACK_DIR}" 2>/dev/null || log "WARNING: stale runtime rollback directory could not be removed"
+JAR_TXN_ACTIVE=0
+RGI_RENDERER_TXN_ACTIVE=0
+
+rm -rf "${JAR_TXN_DIR}" 2>/dev/null || \
+    log "WARNING: could not remove JAR snapshot ${JAR_TXN_DIR}; install is committed - delete it after reboot"
+if [ -d "${RGI_RENDERER_TXN_DIR}" ]; then
+    rm -rf "${RGI_RENDERER_TXN_DIR}" 2>/dev/null || \
+        log "WARNING: could not remove RGI renderer snapshot ${RGI_RENDERER_TXN_DIR}; install is committed - delete it after reboot"
+fi
+rm -rf "${ROLLBACK_DIR}" 2>/dev/null || log "WARNING: stale runtime rollback directory could not be removed (retryable after reboot)"
 
 if remount_read_only; then
     log "/mnt/app remounted read-only"

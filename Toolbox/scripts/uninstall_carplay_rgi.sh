@@ -63,9 +63,24 @@ restore_file() {
   FILENAME="$1"
   DEST="$2"
   SRC="${BACKUPFOLDER}/${FILENAME}"
+  TMP="${DEST}.carplay-rgi.tmp"
 
   log "Restoring ${DEST} from ${SRC}"
-  cp -v "${SRC}" "${DEST}" || fail "Could not restore ${DEST}"
+  # Atomic restore: stage to a temp file next to the destination, verify the
+  # staged copy byte-matches the backup, then rename into place. An interrupt
+  # or IO failure leaves the production file untouched instead of truncated.
+  rm -f "${TMP}" 2>/dev/null
+  cp -v "${SRC}" "${TMP}" || fail "Could not stage ${DEST}"
+  chmod 644 "${TMP}" 2>/dev/null
+  if command -v cmp >/dev/null 2>&1; then
+    cmp "${SRC}" "${TMP}" >/dev/null 2>&1 || fail "Staged copy of ${DEST} does not match backup"
+  else
+    SRC_SIZE=$(wc -c < "${SRC}")
+    TMP_SIZE=$(wc -c < "${TMP}")
+    [ "${SRC_SIZE}" = "${TMP_SIZE}" ] || fail "Staged copy of ${DEST} does not match backup"
+  fi
+  mv "${TMP}" "${DEST}" || fail "Could not restore ${DEST}"
+  sync
   if [ -f "${DEST}" ]; then
     log "Restored ${DEST}"
   else

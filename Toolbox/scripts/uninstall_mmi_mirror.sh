@@ -11,6 +11,7 @@ SCRIPTDIR=$( cd -P -- "$(dirname -- "$(command -v -- "$BASE")")" && pwd -P )
 
 . "${SCRIPTDIR}/util_info.sh"
 . "${SCRIPTDIR}/util_mountsd.sh"
+. "${SCRIPTDIR}/util_startupblock.sh"
 if [ -z "${VOLUME:-}" ]; then
     echo "No SD-card found, quitting"
     exit 1
@@ -141,11 +142,13 @@ disable_autostart() {
 
     if [ "${HAS_BLOCK}" -eq 1 ]; then
         mount -uw /mnt/system 2>/dev/null || return 1
-        sed -i '/# MMI MIRROR V2.2 AUTOSTART BEGIN/,/# MMI MIRROR V2.2 AUTOSTART END/d' "${STARTUP}" || {
+        # Refuse on unpaired markers - a range delete would truncate startup.sh.
+        # Failing here is safe: the OFF script already removed the boot marker.
+        if ! startup_block_delete "${STARTUP}"; then
             mount -ur /mnt/system 2>/dev/null
+            log "WARNING: startup.sh has unpaired MMI MIRROR AUTOSTART markers; left unchanged"
             return 1
-        }
-        sync
+        fi
         mount -ur /mnt/system 2>/dev/null || return 1
     fi
     return 0
@@ -197,15 +200,11 @@ fi
 log "Mounting /mnt/app read-write"
 mount -uw /mnt/app || fail "Could not mount /mnt/app read-write"
 
-if [ -d "${APP_TARGET}" ]; then
-    log "Removing ${APP_TARGET}"
-    rm -rf "${APP_TARGET}" || fail "Could not remove ${APP_TARGET}"
-else
-    log "Runtime directory already absent: ${APP_TARGET}"
-fi
+# Runtime removal is deferred: recovery files are staged and verified first,
+# so a staging failure cannot leave the unit with neither runtime nor recovery.
 rm -rf "${STAGE_DIR}" "${ROLLBACK_DIR}" 2>/dev/null || fail "Could not remove stale MMI Mirror runtime transaction directories"
-if [ -e "${APP_TARGET}" ] || [ -e "${STAGE_DIR}" ] || [ -e "${ROLLBACK_DIR}" ]; then
-    fail "Uninstall verification failed: an MMI Mirror runtime directory still exists"
+if [ -e "${STAGE_DIR}" ] || [ -e "${ROLLBACK_DIR}" ]; then
+    fail "Uninstall verification failed: an MMI Mirror runtime transaction directory still exists"
 fi
 
 rm -f "${JAR_TARGET}.mmi-mirror.tmp" "${JAR_TARGET}.mmi-mirror.rollback.tmp" \
@@ -214,6 +213,10 @@ rm -f "${JAR_TARGET}.mmi-mirror.tmp" "${JAR_TARGET}.mmi-mirror.rollback.tmp" \
 if [ "${RGI_NATIVE_COUNT}" -eq 0 ]; then
     log "RGI native payload state: absent (0/3); removing carplay_hook.jar owned by MMI Mirror"
     rm -f "${JAR_TARGET}" || fail "Could not remove ${JAR_TARGET}"
+    if [ -d "${APP_TARGET}" ]; then
+        rm -rf "${APP_TARGET}" || fail "Could not remove ${APP_TARGET}"
+    fi
+    log "Runtime directory removed: ${APP_TARGET}"
 else
     if [ "${RGI_NATIVE_COUNT}" -eq 3 ]; then
         log "RGI native payload state: complete (3/3); restoring stable RGI JAR + displayable20 renderer"
@@ -223,17 +226,27 @@ else
 
     mkdir -p "${JAR_TARGET_DIR}" "${RGI_HOOK_DIR}" || fail "Could not create RGI/JAR target directories"
 
+    # Stage BOTH recovery files and verify them BEFORE deleting the runtime
+    # directory. A staging failure here leaves every existing file untouched;
+    # deleting the runtime first is what used to risk a mixed state.
     if ! copy_checked_no_fail "${STABLE_RGI_RENDERER}" "${RGI_NATIVE_2}.mmi-mirror.tmp" 755; then
         rm -f "${RGI_NATIVE_2}.mmi-mirror.tmp" 2>/dev/null || true
         fail "Could not stage stable RGI maneuver_render"
     fi
+    if ! copy_checked_no_fail "${STABLE_RGI_JAR}" "${JAR_TARGET}.mmi-mirror.tmp" 644; then
+        rm -f "${RGI_NATIVE_2}.mmi-mirror.tmp" "${JAR_TARGET}.mmi-mirror.tmp" 2>/dev/null || true
+        fail "Could not stage stable RGI carplay_hook.jar"
+    fi
+
+    rm -rf "${APP_TARGET}" || {
+        rm -f "${RGI_NATIVE_2}.mmi-mirror.tmp" "${JAR_TARGET}.mmi-mirror.tmp" 2>/dev/null || true
+        fail "Could not remove ${APP_TARGET}"
+    }
+    log "Runtime directory removed: ${APP_TARGET}"
+
     mv "${RGI_NATIVE_2}.mmi-mirror.tmp" "${RGI_NATIVE_2}" || fail "Could not restore stable RGI maneuver_render"
     log "Stable RGI displayable20 maneuver_render restored from ${STABLE_RGI_RENDERER}"
 
-    if ! copy_checked_no_fail "${STABLE_RGI_JAR}" "${JAR_TARGET}.mmi-mirror.tmp" 644; then
-        rm -f "${JAR_TARGET}.mmi-mirror.tmp" 2>/dev/null || true
-        fail "Could not stage stable RGI carplay_hook.jar"
-    fi
     mv "${JAR_TARGET}.mmi-mirror.tmp" "${JAR_TARGET}" || fail "Could not restore stable RGI carplay_hook.jar"
     log "Stable RGI carplay_hook.jar restored from ${STABLE_RGI_JAR}"
 fi

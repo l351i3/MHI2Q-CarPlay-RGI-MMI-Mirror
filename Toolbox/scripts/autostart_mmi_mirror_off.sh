@@ -5,6 +5,7 @@ export PATH=/proc/boot:/bin:/usr/bin:/usr/sbin:/sbin:/mnt/app/armle/bin:/mnt/app
 
 if [ "$_" = "/bin/on" ]; then BASE="$0"; else BASE="$_"; fi
 SCRIPTDIR=$( cd -P -- "$(dirname -- "$(command -v -- "$BASE")")" && pwd -P )
+. "${SCRIPTDIR}/util_startupblock.sh"
 STARTUP="/etc/boot/startup.sh"
 MARKER="${SCRIPTDIR}/.mmi_mirror_autostart"
 BEGIN_MARK="# MMI MIRROR V2.2 AUTOSTART BEGIN"
@@ -48,11 +49,16 @@ if [ -f "${STARTUP}" ]; then
         exit 1
     }
     if grep -qF "${BEGIN_MARK}" "${STARTUP}" 2>/dev/null; then
-        sed -i '/# MMI MIRROR V2.2 AUTOSTART BEGIN/,/# MMI MIRROR V2.2 AUTOSTART END/d' "${STARTUP}" || {
+        # Refuse on unpaired markers: a range delete would run to end-of-file
+        # and destroy unrelated startup content. The marker is already removed,
+        # so boot-time execution is disabled either way.
+        if ! startup_block_delete "${STARTUP}"; then
             mount -ur /mnt/system 2>/dev/null
-            write_status "FAILED" "Marker removed, but the startup block could not be removed"
+            write_status "FAILED" "Unpaired or undeletable startup block; startup.sh left unchanged"
+            echo "startup.sh has unpaired MMI MIRROR AUTOSTART markers; nothing was edited."
+            echo "Restore it from the AutoStart ON backup, then retry AutoStart OFF."
             exit 1
-        }
+        fi
     fi
     sync
     mount -ur /mnt/system 2>/dev/null || {
