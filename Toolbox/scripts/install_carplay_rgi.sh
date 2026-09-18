@@ -27,6 +27,37 @@ INSTALL_MODE="unknown"
 
 # Keep green-menu messages visible on fd 3 while stdout/stderr is appended to the log.
 exec 3>&1
+
+# Firmware compatibility gate - refuse BEFORE touching anything, including the
+# backup folder on the SD card (a refused install must leave no artifacts).
+# The shipped hook/renderer/jar are built and tested against MHI2Q CN trains;
+# on MHI2 (non-Q) units the CarPlay stack uses a different interface, and on
+# other regions the CN-built payload is unverified. An empty VERSION means the
+# train could not even be read, which also poisons the backup folder naming.
+gate_refuse() {
+  echo "ERROR: $*"
+  echo "ERROR: $*" >&3
+  exit 1
+}
+if [ -z "${VERSION}" ]; then
+  gate_refuse "Could not read 'Current train' from /net/rcc/dev/shmem/version.txt. Refusing to install without a known firmware train."
+fi
+case "${VERSION}" in
+  MHI2Q_CN_*)
+    GATE_PASSED=1
+    ;;
+  MHI2Q_*)
+    if [ "${CARPLAY_RGI_ALLOW_NON_CN}" = "1" ]; then
+      GATE_PASSED=1
+    else
+      gate_refuse "Firmware train ${VERSION} is MHI2Q but not CN. The shipped payload is CN-built and unverified on this train. Set CARPLAY_RGI_ALLOW_NON_CN=1 only if you accept the risk."
+    fi
+    ;;
+  *)
+    gate_refuse "Firmware train '${VERSION}' is not MHI2Q. This payload requires an MHI2Q head unit; refusing to install."
+    ;;
+esac
+
 mkdir -p "${BACKUPFOLDER}" || exit 1
 touch "${BACKUPFOLDER}/DONT_TOUCH_ANYTHING_HERE" || exit 1
 touch "${LOGFILE}" || exit 1
@@ -885,30 +916,7 @@ log "Firmware: ${VERSION}"
 log "FAZIT: ${FAZIT}"
 log "Source: ${APP_SOURCE}"
 log "Backup: ${BACKUPFOLDER}"
-
-# Firmware compatibility gate - refuse BEFORE touching any production file.
-# The shipped hook/renderer/jar are built and tested against MHI2Q CN trains;
-# on MHI2 (non-Q) units the CarPlay stack uses a different interface, and on
-# other regions the CN-built payload is unverified. An empty VERSION means the
-# train could not even be read, which also poisons the backup folder naming.
-if [ -z "${VERSION}" ]; then
-  fail "Could not read 'Current train' from /net/rcc/dev/shmem/version.txt. Refusing to install without a known firmware train."
-fi
-case "${VERSION}" in
-  MHI2Q_CN_*)
-    log "Firmware train ${VERSION}: MHI2Q CN - compatibility gate passed"
-    ;;
-  MHI2Q_*)
-    if [ "${CARPLAY_RGI_ALLOW_NON_CN}" = "1" ]; then
-      log "WARNING: firmware train ${VERSION} is MHI2Q but not CN; proceeding only because CARPLAY_RGI_ALLOW_NON_CN=1 was explicitly set"
-    else
-      fail "Firmware train ${VERSION} is MHI2Q but not CN. The shipped payload is CN-built and unverified on this train. Set CARPLAY_RGI_ALLOW_NON_CN=1 only if you accept the risk."
-    fi
-    ;;
-  *)
-    fail "Firmware train '${VERSION}' is not MHI2Q. This payload requires an MHI2Q head unit; refusing to install."
-    ;;
-esac
+log "Compatibility gate passed for train ${VERSION}${CARPLAY_RGI_ALLOW_NON_CN:+ (non-CN override explicitly set)}"
 
 recover_stale_transaction
 
